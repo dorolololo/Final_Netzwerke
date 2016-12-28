@@ -1,17 +1,14 @@
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.Arrays;
+import java.io.InputStreamReader;
+import java.net.InetAddress;
+import java.util.function.BiFunction;
 
 public class FileReceiver {
+	
+	//private static final int TIMEOUT = 60000;
 
-	/** Encode Format fuer Dateinamen. */
-	private static final String ENCODE = "UTF-8";
-	
-	private static final int PORT = 1337;
-	
-	private static final MeasureTool mTool = new MeasureTool("FileReceiver");
-	
 	/**
 	 * Wartet auf eingehende Dateiübertragungen. Empfangene Dateien werden lokal gespeichert.
 	 * Nach dem Empfang einer Datei bleibt das Programm weiter aktiv 
@@ -19,44 +16,63 @@ public class FileReceiver {
 	 * @param args keine.
 	 */
 	public static void main(String[] args) throws Exception {
+		System.out.println("local Adress is: " + InetAddress.getLocalHost().getHostAddress());
 		while (true) {
-			try(MultiSocket socket = new AlternatingBit(PORT)) {
-				socket.connect();
-				System.out.println("connected @ " + "?" + ":" + PORT);
-				final String fileName = new String(socket.receive(), ENCODE);
-				File file = new File(fileName);
-				try(FileOutputStream outputStream = new FileOutputStream(file)) {
-					byte[] size = socket.receive();					
-					long fileSize = 0;
-					for (int i = 0; i < Long.BYTES; i++) {
-						fileSize = (fileSize << Byte.SIZE) + (size[i] & 0xFF);
+			try (FileTransfer transfer = new FileTransfer()) {
+				transfer.connect();
+				System.out.println("connected @ " + transfer.destAdress() + ":" + FileTransfer.PORT);				
+				final boolean success = transfer.receive(new BiFunction<String, Long, File>() {				
+					@Override
+					public File apply(String name, Long size) {
+						BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
+						String fileName = name;
+						try {
+
+							while (true) {
+								System.out.println("file: " + fileName + " (" + MeasureTool.fileSize(size) + ")");
+								System.out.println("accept?: yes(y), no(n), rename(r)");
+								String an = in.readLine();							
+								if ("y".equals(an)) {
+									File file = new File(fileName);
+									File parent = file.getAbsoluteFile().getParentFile();
+									long space = parent.getFreeSpace();
+									if (space < size) {
+										System.out.println("not enough space available: (" + MeasureTool.fileSize(space - size) + ")");
+									} else if (file.isFile()) { // TODO <- das richtige?
+										while (true) {
+											System.out.println("file already exist");
+											System.out.println("override?: yes(y), no(n)");
+											an = in.readLine();
+											if ("y".equals(an)) {
+												return file;
+											} else if ("n".equals(an)) {
+												break;
+											}
+										}
+									} else {
+										return file;
+									}							
+								} else if ("n".equals(an)) {
+									return null;
+								} else if ("r".equals(an)) {
+									System.out.println("set name: (path)<filename>");
+									an = in.readLine();
+									fileName = an;
+								}
+							}
+						} catch (IOException e) {
+							return null;
 						}
-					System.out.println("accepted file: " + fileName + " (" + fileSize + " Bytes)");
-					//TODO datei nicht angenommen
-					
-					mTool.totalSize(fileSize);
-					while (fileSize > 0) {
-						mTool.start();
-						//TODO receive mit off length?
-						byte[] buffer = socket.receive();
-						mTool.printDBG("receive and write data (" +  buffer.length + " Bytes)");
-						//System.out.println("FileReceiver: data(" + Arrays.toString(buffer) + ")");
-						fileSize -= buffer.length;
-						outputStream.write(buffer);
-						mTool.saveTime();
-						mTool.addPSize(buffer.length);
-						mTool.updateOutput();
-					}		
-				}
+					}
+				}, true);
+				if (success) {
+					System.out.println("file received:");
+					System.out.println(transfer);	
+				} else {
+					System.out.println("file not received");
+				}							
 			}
-			mTool.clearOutput();
-			mTool.reset();
-			System.out.println("file received:");
-			System.out.println("avr rate: " + "? Mbit/s | time: " + "? min");
-			mTool.printDBG("finished");
 		}
-
-
 	}
 
 }

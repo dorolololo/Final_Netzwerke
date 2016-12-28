@@ -9,7 +9,7 @@ public class MeasureTool {
 
 	private static final long INIT_START = System.currentTimeMillis();
 	
-	private static final boolean DEBUG = false;
+	private static final boolean DEBUG = Boolean.parseBoolean(System.getProperty("debug", "false")); // java -Ddebug=true <class> ...
 	
 	/** Packetzaehler */
 	private long count = 0;
@@ -19,6 +19,7 @@ public class MeasureTool {
 	/** Begin der Uebertragung in ms. */
 	private long start = 0;
 	
+	// TODO problem mit der zeit lösen
 	/** Ende der Uebertragung in ms. */
 	private long totalTime = 0;
 	
@@ -29,15 +30,50 @@ public class MeasureTool {
 	private long currentSize;
 	
 	private long lastTime;
-	
+
 	private long lastSize;
+
+	// TODO synchronized
+	private final Runnable outputUpdate = new Runnable() {		
+		String output = "";
+		@Override
+		public void run() {
+			try {
+				while (!DEBUG) {
+					StringBuilder result = new StringBuilder();
+					result.append(currentRatePercent());
+					result.append(" speed: " + currentRate());
+					result.append(" remain: " + remainSize());
+					result.append(" " + remainTime());
+					if (!output.equals(result)) {
+						clearOutput();
+						output = result.toString();
+						System.out.print(output);
+						System.out.flush();
+					}
+					lastSize = 0;
+					Thread.sleep(5000);
+				}
+			} catch (InterruptedException e) { 
+				// Exit
+			}
+			clearOutput();
+		}
+		private void clearOutput() {
+			StringBuilder clr = new StringBuilder();
+			for (int i = 0; i < output.length(); i++) {
+				clr.append("\b \b");
+			}
+			System.out.print(clr);
+			System.out.flush();
+			output = "";
+		}
+	};
 	
-	private long lastOutput;
-	
+	private Thread updateThread = new Thread(outputUpdate);
 	
 	private final String className;
 	
-	private String output = "";
 	
 	/**
 	 * Erzeugt ein neues MeasureTool Objekt.
@@ -45,42 +81,23 @@ public class MeasureTool {
 	 */
 	public MeasureTool(String className) {
 		this.className = className;
+		updateThread.setDaemon(true);
 	}
 	
-	public void updateOutput() {
-		if (!DEBUG && System.currentTimeMillis() - lastOutput > 1000 ) {
-			StringBuilder result = new StringBuilder();
-			int percent = (int)currentRatePercent();
-			result.append(percent + "% [");
-			int off = i/2 - percent.length()/2;
-			for (int i = 0; i < percent/5; i++) {				
-				result.append(off < i || off + percent.length() < i ? percent. : '=');
-			}
-			for (int i = percent/5; i < 20; i++) {
-				result.append(' ');
-			}
-			result.append("] ");
-			result.append(currentRate() + " kbit/s ");
-			result.append(remainTime() + " ms ");
-			result.append(remainSize() + " Bytes");			
-			clearOutput();
-			output = result.toString();
-			System.out.print(output);
-			System.out.flush();
-			lastOutput = System.currentTimeMillis();
-		}
+		
+	public void startUpdate() {
+		if (outputUpdate!= null && !updateThread.isAlive()) {
+			updateThread.start();
+		}	
 	}
 	
-	public void clearOutput() {
-		StringBuilder clr = new StringBuilder();
-		for (int i = 0; i < output.length(); i++) {
-			clr.append("\b \b");
-		}
-		System.out.print(clr);
-		System.out.flush();
-		output = "";
+	public void endUpdate() throws InterruptedException {
+		if (updateThread!= null && updateThread.isAlive()) {
+			updateThread.interrupt();
+			updateThread.join();
+			updateThread = null;
+		}	
 	}
-	
 	
 	public void printDBG(String msg) {
 		if (DEBUG) {
@@ -92,8 +109,8 @@ public class MeasureTool {
 	/**
 	 * Setzt den Begin der Messung.
 	 */
-	public void start() {
-		start = System.currentTimeMillis();
+	public void startTimer() {
+		start = System.nanoTime();
 	}
 	
 	/**
@@ -103,15 +120,26 @@ public class MeasureTool {
 		count++;
 	}
 	
+	
 	/**
 	 * Zaehlt das verlorene Paket.
 	 */
-	public void dropCount() {
+	public void addDrop() {
 		dropCount++;
 	}
 	
-	public void addPSize(long size) {
-		lastSize = size;
+	
+	public void addSizeEndTimer(int size) {
+		long cTime = System.nanoTime();
+		long duration = cTime - start;
+		if ((lastTime/1e6d) < 5000) {
+			lastTime += duration;
+			lastSize += size;
+		} else {
+			lastTime = duration;
+			lastSize = size;
+		}
+		totalTime += duration;		
 		this.currentSize += size;
 	}
 	
@@ -120,91 +148,124 @@ public class MeasureTool {
 	 * die Maximalanzahl der zu uebertragenden Pakete fest.
 	 * @param packet Ein Paket.
 	 */
-	public void totalSize(long fileSize) {
+	public void setTotalSize(long fileSize) {
 		totalSize = fileSize;
 	}
 	
-	public double currentRatePercent() {
-		return totalSize > 0 ?(((double)(currentSize)/totalSize) * 100) : 0;
+	private String currentRatePercent() {
+		double rate = totalSize > 0 ?(((double)(currentSize)/totalSize) * 100) : 0;
+		String str = (int)rate + "%";
+		StringBuilder result = new StringBuilder();
+		result.append("[");
+		int off = 10 - str.length()/2;
+		for (int i = 0; i < (int)rate/5; i++) {				
+			result.append(off > i || off + str.length()-1 < i ? '=' : str.charAt(i - off));
+		}
+		for (int i = (int)rate/5; i < 20; i++) {
+			result.append(off > i || off + str.length()-1 < i ? ' ' : str.charAt(i - off));
+		}
+		result.append("]");
+		return result.toString();
+	}	
+	
+	private String duration() {
+		return time(totalTime);
 	}
 	
-	public double currentRate() {
-		return lastTime > 0 ?(lastSize * Byte.SIZE) / (double)lastTime : 0;
+	private String remainTime() {
+		if (lastTime == 0 || lastSize == 0) {return "N/A";}
+		long remain = totalSize - currentSize; // Byte
+		double rate = (double)lastSize / lastTime; // Byte/ns
+		double time = remain / rate; // ns
+		return time(Math.round(time));
 	}
 	
-	public long remainSize() {
-		return totalSize - currentSize;
+	public static String time(long time) { // time ns
+		long newTime = Math.round(time/1e9d); // sec
+		String[] timeUnit = new String[] {
+				"s", "min ", "h "		
+		};
+		int[] timeCalc = new int[] {
+				60, 60, 24
+		};
+		String result = "";
+		for (int i = 0; i < timeUnit.length && Math.abs(newTime) > 0; i++) {
+			final long t = newTime % timeCalc[i];
+			result = t + timeUnit[i] + result;
+			newTime -= t;
+			newTime /= timeCalc[i];
+		}
+		if (Math.abs(newTime) > 0) {
+			result = newTime + "d " + result;
+		}
+		return result.isEmpty() ? "0s" : result;
 	}
 	
-	public int remainTime() {
-		return (int) (remainSize() / currentRate());
+	private String avrRate() {
+		return rate(currentSize, totalTime);
 	}
 	
-	/**
-	 * Sichert den momentanen Zeitraum der Messung.
-	 */
-	public void saveTime() {
-		long cTime = System.currentTimeMillis();
-		lastTime = cTime - start;
-		totalTime += lastTime;
+	private String currentRate() {
+		return rate(lastSize, lastTime);
 	}
 	
-	/**
-	 * Liefert die Anzahl der gezaehlten Pakete.
-	 * @return Anzahl gezaehlter Pakete.
-	 */
-	public long getCount() {
-		return count;
+	
+	public static String rate(long size, long time) { // size byte / time ns
+		if (time == 0) {return "N/A";}
+		String[] rateUnit = new String[] {
+				"bit/s", "Kbit/s", "Mbit/s", "Gbit/s"			
+		};
+		double rate = size * Byte.SIZE * 1000 / (time/1e6d); // bit/s
+		rate = Math.round(rate * 10) / 10d; 
+		for (int i = 0; i < rateUnit.length; i++) {
+			if (Math.abs(rate)  < 1000) {
+				return rate + rateUnit[i]; // ???.? ?bit/s
+			}
+			rate = Math.round(rate / 100) / 10d;
+		}
+		return rate + "Tbit/s";
 	}
 	
-	/**
-	 * Liefert die Anzahl der maximal zu uebertragenden Pakete.
-	 * @return Anzahl maximal zu uebertragenden Pakete.
-	 */
-	public long getTotal() {
-		return totalSize;
+	
+	public static String fileSize(long size) {
+		double remain = size; // Byte
+		String[] sizeUnit = new String[] {
+				"Byte", "KB", "MB", "GB"			
+		};
+		for (int i = 0; i < sizeUnit.length; i++) {
+			if (Math.abs(remain) < 1000) {
+				return remain + sizeUnit[i];
+			}
+			remain = Math.round(remain / 100) / 10d;
+		}
+		return remain + "TB";
 	}
+	
+	private String remainSize() {
+		return fileSize(totalSize - currentSize);
+	}
+	
+	
+	private String packetsStats() {
+		return (count - dropCount) + "/" + count;
+	}
+	
 	
 	/**
 	 * Liefert die Anzahl der verlorenen Pakete in Prozent.
 	 * @return verlorenen Pakete in Prozent.
 	 */
-	public double getLost() {
-		return count > 0 ?(count - dropCount) / (count / 100.0) : 0;
-	}
-	
-	
-	/**
-	 * Liefert die Uebertragungsrate in kbit/s.
-	 * @return Die Uebertragungsrate.
-	 */
-	public double getTransmissionRate() {
-		return getDuration() > 0 ? currentSize * Byte.SIZE / getDuration() : 0;
-	}
-	
-	/**
-	 * Liefert die Dauer der Messung in ms.
-	 * @return Die Dauer in ms.
-	 */
-	public long getDuration() {
-		return totalTime;
+	private String lostPerc() {
+		double value = count > 0 ? dropCount * 100d / count : 0;
+		return (Math.round(value * 10) / 10d) + "%";
 	}
 
 	@Override
 	public String toString() {
-		return "S: " + getTransmissionRate() + " kbit/s " 
-				+ "D: " + getDuration() + " ms "
-				+ "P: " + getCount() + "/" + getTotal()
-				+ " lost: " + getLost() + "%";
-	}
-
-	public void reset() {
-		count = 0;
-		start = 0;
-		totalTime = 0;
-		totalSize = 0;
-		currentSize = 0;
-		
+		return className + ": [avr speed: " + avrRate()
+				+ " time: " + duration()
+				+ " packets: " + packetsStats()
+				+ " lost: " + lostPerc() + "]";
 	}
 	
 	
