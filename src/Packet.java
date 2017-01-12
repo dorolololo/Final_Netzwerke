@@ -10,13 +10,13 @@ import java.util.Arrays;
 public class Packet {
 	
 	/* Flags */
-	public static final byte DAT = 0;
-	public static final byte FIN = 1;
-	public static final byte SYN = 2;
-	public static final byte ACK = 4;
-	public static final byte WND = 8;
-	public static final byte PSH = 16;
-	public static final byte PRB = 32;
+	public static final byte DAT = 1;
+	public static final byte FIN = 2;
+	public static final byte SYN = 4;
+	public static final byte ACK = 8;
+	public static final byte WND = 16;
+	public static final byte PSH = 32;
+	public static final byte PRB = 64;
 	
 	/** Die maximale Groesse eines Paketes in Byte. */
 	public static final int MAX_PACKET_SIZE = 1400;
@@ -45,6 +45,8 @@ public class Packet {
 	/** Pruefsumme um Bitfehler zu erkennen. */
 	private final int checksum;
 	
+	private final int length;
+	
 //	/** Der Byte Buffer dieses Paketes. */
 //	private ByteBuffer buffer;
 	
@@ -57,26 +59,30 @@ public class Packet {
 	
 	//private final byte[] packet;
 	
-	private byte[] packetBuffer;
+	//private byte[] packetBuffer;
 	
 	private byte[] headerBuffer;
 	
-	private byte[] dataBuffer;
+	//private byte[] dataBuffer;
 	
 	/**
 	 * Erzeugt ein neues Packet Objekt zum Versand.
 	 * @param seq Sequenznummer von diesem Paket.
 	 * @param data Byte Array der zu versendende daten.
 	 */
-	public Packet(int seq, byte flags, byte[] data) {
+	public Packet(int seq, int flags, byte[] data) {
 		this(seq, flags, data, 0, (data == null ? 0 : data.length));
 	}
 	
-	public Packet(int seq, byte flags) {
-		this(seq, flags, null);
+	public Packet(int seq, int flags) {
+		this(seq, flags, (byte[])null);
 	}
 	
-	public Packet(int seq, byte flags, byte[] data, int off, int len) {
+	public Packet(int seq, int flags, ByteBuffer data) {
+		this(seq, flags, data.array(),data.arrayOffset() + data.position(),data.remaining());
+	}
+	
+	public Packet(int seq, int flags, byte[] data, int off, int len) {
 		if (data != null) { 
 			if (off < 0 || len < 0 || len > data.length - off) {
 				throw new IndexOutOfBoundsException("data length: " + data.length + " off: " + off + " len: " + len);
@@ -85,16 +91,18 @@ public class Packet {
 				throw new IllegalArgumentException("data length > " + DATA_SIZE + " : " + len);
 			}
 		}
-		header = ByteBuffer.wrap(new byte[HEADER_SIZE]);
-		header.putInt(CHECKSUM_OFFSET, 0);
-		header.putInt(LENGTH_OFFSET,len);
-		header.putInt(SEQ_OFFSET,seq);
-		header.put(FLAGS_OFFSET,flags);
+		this.headerBuffer = new byte[HEADER_SIZE];
+		this.header = ByteBuffer.wrap(this.headerBuffer);
+		this.header.putInt(CHECKSUM_OFFSET, 0);
+		this.header.putInt(LENGTH_OFFSET,len + HEADER_SIZE);
+		this.header.putInt(SEQ_OFFSET,seq);
+		this.header.put(FLAGS_OFFSET,(byte)flags);
 		final int newChecksum = calcChecksum(header.array()) + (data == null ? 0 : calcChecksum(data, off, len));
-		header.putInt(CHECKSUM_OFFSET, newChecksum);
+		this.header.putInt(CHECKSUM_OFFSET, newChecksum);
 		this.data = data == null ? null : ByteBuffer.wrap(data, off, len);
+		this.length = len + HEADER_SIZE;
 		this.seq = seq;
-		this.flags = flags;
+		this.flags = (byte)flags;
 		this.checksum = newChecksum;
 		this.valid = true;
 	}
@@ -114,8 +122,9 @@ public class Packet {
 		this.header = ByteBuffer.wrap(buffer,off,HEADER_SIZE);
 		this.seq = header.getInt(SEQ_OFFSET);
 		this.flags = header.get(FLAGS_OFFSET);
+		this.length = header.getInt(LENGTH_OFFSET);
 		this.checksum = calcChecksum(buffer, off + Integer.BYTES, len - Integer.BYTES); // Die Checksumme steht am Anfang des Buffers und wird nicht mitberechnet.
-		this.valid = (len - HEADER_SIZE) == header.getInt(LENGTH_OFFSET) && checksum == header.getInt(CHECKSUM_OFFSET);
+		this.valid = len == header.getInt(LENGTH_OFFSET) && checksum == header.getInt(CHECKSUM_OFFSET);
 	}
 	
 	/**
@@ -148,7 +157,7 @@ public class Packet {
 		return valid;
 	}
 	
-	public boolean checkFlags(byte flags) {
+	public boolean checkFlags(int flags) {
 		return (this.flags & flags) > 0;
 	}
 	
@@ -160,34 +169,50 @@ public class Packet {
 		return seq;
 	}
 	
+	public int getFlags() {
+		return flags;
+	}
 	
 	/**
 	 * Liefert die Daten von diesem Paket.
 	 * @return Die Daten.
 	 */
-	public byte[] getData() {
-		if (dataBuffer == null) {
-			final int arrayOffset = data.arrayOffset();
-			final int off = arrayOffset + data.position();
-			final int len = arrayOffset + data.limit();
-			dataBuffer = Arrays.copyOfRange(data.array(), off, len);
-		}
-		return dataBuffer;
+	public ByteBuffer getData() {
+		return data;
 	}
 	
-	/**
-	 * Liefert den Buffer des Paketes.
-	 * @return der Paketbuffer als Bayte Array.
-	 */
-	public byte[] getPacket() {
-		if (packetBuffer == null) {
-			packetBuffer = Arrays.copyOf(getHeader(), HEADER_SIZE + getHeader().length);
-			System.arraycopy(getData(), 0, packetBuffer, HEADER_SIZE, getData().length);
-		}
-		return packetBuffer;
-	}
+	
+//	/**
+//	 * Liefert die Daten von diesem Paket.
+//	 * @return Die Daten.
+//	 */
+//	public byte[] getData() {
+//		if (dataBuffer == null) {
+//			final int arrayOffset = data.arrayOffset();
+//			final int off = arrayOffset + data.position();
+//			final int len = arrayOffset + data.limit();
+//			dataBuffer = Arrays.copyOfRange(data.array(), off, len);
+//		}
+//		return dataBuffer;
+//	}
+	
+//	/**
+//	 * Liefert den Buffer des Paketes.
+//	 * @return der Paketbuffer als Bayte Array.
+//	 */
+//	public byte[] getPacket() {
+//		if (packetBuffer == null) {
+//			packetBuffer = Arrays.copyOf(getHeader(), HEADER_SIZE + getHeader().length);
+//			System.arraycopy(getData(), 0, packetBuffer, HEADER_SIZE, getData().length);
+//		}
+//		return packetBuffer;
+//	}
 
 	
+	public int getLength() {
+		return length;
+	}
+
 	public byte[] getHeader() {
 		if (headerBuffer == null) {
 			final int arrayOffset = header.arrayOffset();

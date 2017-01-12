@@ -4,11 +4,11 @@ import java.io.OutputStream;
 
 public class BadChannel extends MultiSocket{
 
-	private static final double ERROR_RATE = 0.5;
+	private static final double ERROR_RATE = 0.05;
 	
-	private static final double DROP_RATE = 0.25;
+	private static final double DROP_RATE = 0.1;
 	
-	private static final double DUPLICATE_RATE = 0.3;
+	private static final double DUPLICATE_RATE = 0.05;
 	
 	private boolean dublicate;
 	
@@ -110,7 +110,7 @@ public class BadChannel extends MultiSocket{
 	
 	private boolean isError() {
 		final double random = Math.random();
-		if ((int)(ERROR_RATE / random) > 0) {  // TODO <- funktioniert das wirklich?
+		if ((int)(ERROR_RATE / random) > 0) {
 			receive.printDBG("error");
 			return true;
 		} 

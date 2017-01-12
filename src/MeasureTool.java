@@ -24,7 +24,7 @@ public class MeasureTool {
 	private long totalTime = 0;
 	
 	/** Die maximale Anzahl der Pakete. */
-	private long totalSize = 0;
+	private long totalSize;
 	
 	/** Groesse eines Paketes in Byte. */
 	private long currentSize;
@@ -85,8 +85,9 @@ public class MeasureTool {
 	}
 	
 		
-	public void startUpdate() {
+	public void startUpdate(long fileSize) {
 		if (outputUpdate!= null && !updateThread.isAlive()) {
+			totalSize = fileSize;
 			updateThread.start();
 		}	
 	}
@@ -143,14 +144,14 @@ public class MeasureTool {
 		this.currentSize += size;
 	}
 	
-	/**
-	 * Legt an Hand von Paketen
-	 * die Maximalanzahl der zu uebertragenden Pakete fest.
-	 * @param packet Ein Paket.
-	 */
-	public void setTotalSize(long fileSize) {
-		totalSize = fileSize;
-	}
+//	/**
+//	 * Legt an Hand von Paketen
+//	 * die Maximalanzahl der zu uebertragenden Pakete fest.
+//	 * @param packet Ein Paket.
+//	 */
+//	public void setTotalSize(long fileSize) {
+//		totalSize = fileSize;
+//	}
 	
 	private String currentRatePercent() {
 		double rate = totalSize > 0 ?(((double)(currentSize)/totalSize) * 100) : 0;
